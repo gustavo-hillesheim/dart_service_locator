@@ -1,10 +1,17 @@
-import 'package:service_locator/exceptions.dart';
+import 'exceptions.dart';
 
-class ServiceLocator {
+abstract class Locator {
+  T call<T extends Object>() {
+    return locate<T>();
+  }
+
+  T locate<T extends Object>();
+  bool canLocate<T extends Object>();
+}
+
+class ServiceLocator extends Locator {
   final Map<Type, Object?> _instances = {};
   final Map<Type, _Factory?> _factories = {};
-  final List<Type> _servicesBeingLocated = [];
-
   void registerInstance<T extends Object>(T instance) {
     _instances[T] = instance;
   }
@@ -21,28 +28,52 @@ class ServiceLocator {
     );
     _factories[T] = factory;
     if (!lazy && singleton) {
-      _instances[T] = _resolveFactory(factory);
+      _instances[T] = _createLocateDelegate()._resolveFactory(factory);
     }
   }
 
-  T call<T extends Object>() {
-    return locate<T>();
+  @override
+  T locate<T extends Object>() {
+    return _createLocateDelegate().locate<T>();
   }
 
+  @override
+  bool canLocate<T extends Object>() {
+    return _createLocateDelegate().canLocate<T>();
+  }
+
+  _LocateDeletage _createLocateDelegate() {
+    return _LocateDeletage(instances: _instances, factories: _factories);
+  }
+}
+
+class _LocateDeletage extends Locator {
+  final Map<Type, Object?> instances;
+  final Map<Type, _Factory?> factories;
+  final List<Type> servicesBeingLocated = [];
+
+  _LocateDeletage({required this.instances, required this.factories});
+
+  @override
   T locate<T extends Object>() {
     _checkIsNotBeingLocated<T>();
-    _servicesBeingLocated.add(T);
+    servicesBeingLocated.add(T);
     _checkCanBeLocated<T>();
     final locatedService = (_locateInInstances<T>() ?? _locateInFactories<T>())!;
     if (locatedService.shouldCache) {
-      _instances[T] = locatedService.instance;
+      instances[T] = locatedService.instance;
     }
-    _servicesBeingLocated.remove(T);
+    servicesBeingLocated.remove(T);
     return locatedService.instance;
   }
 
+  @override
+  bool canLocate<T extends Object>() {
+    return instances.containsKey(T) || factories.containsKey(T);
+  }
+
   _LocatedService<T>? _locateInInstances<T extends Object>() {
-    final instance = _instances[T] as T?;
+    final instance = instances[T] as T?;
     if (instance == null) {
       return null;
     }
@@ -50,7 +81,7 @@ class ServiceLocator {
   }
 
   _LocatedService<T>? _locateInFactories<T extends Object>() {
-    final factory = _factories[T] as _Factory<T>?;
+    final factory = factories[T] as _Factory<T>?;
     if (factory == null) {
       return null;
     }
@@ -61,19 +92,15 @@ class ServiceLocator {
   }
 
   void _checkIsNotBeingLocated<T extends Object>() {
-    if (_servicesBeingLocated.contains(T)) {
-      throw CircularDependencyException<T>([..._servicesBeingLocated, T]);
+    if (servicesBeingLocated.contains(T)) {
+      throw CircularDependencyException<T>([...servicesBeingLocated, T]);
     }
   }
 
   void _checkCanBeLocated<T extends Object>() {
     if (!canLocate<T>()) {
-      throw CouldNotLocateException<T>(_servicesBeingLocated);
+      throw CouldNotLocateException<T>(servicesBeingLocated);
     }
-  }
-
-  bool canLocate<T extends Object>() {
-    return _instances.containsKey(T) || _factories.containsKey(T);
   }
 
   T _resolveFactory<T extends Object>(_Factory<T> factory) {
@@ -100,4 +127,4 @@ class _Factory<T extends Object> {
   });
 }
 
-typedef FactoryFn<T extends Object> = T Function(ServiceLocator l);
+typedef FactoryFn<T extends Object> = T Function(Locator l);
