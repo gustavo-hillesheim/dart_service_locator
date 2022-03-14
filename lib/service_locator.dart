@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'exceptions.dart';
 
 abstract class Locator {
@@ -6,6 +8,7 @@ abstract class Locator {
   }
 
   T locate<T extends Object>();
+  Future<T> locateAsync<T extends Object>();
   bool canLocate<T extends Object>();
 }
 
@@ -16,8 +19,8 @@ class ServiceLocator extends Locator {
     _instances[T] = instance;
   }
 
-  void registerFactory<T extends Object>(
-    FactoryFn<T> factoryFn, {
+  FutureOr<void> registerFactory<T extends Object>(
+    FactoryFn<FutureOr<T>> factoryFn, {
     bool singleton = true,
     bool lazy = true,
   }) {
@@ -28,13 +31,22 @@ class ServiceLocator extends Locator {
     );
     _factories[T] = factory;
     if (!lazy && singleton) {
-      _instances[T] = _createLocateDelegate()._resolveFactory(factory);
+      if (factoryFn is FactoryFn<Future>) {
+        return _createLocateDelegate()._resolveAsyncFactory(factory).then((instance) => _instances[T] = instance);
+      } else {
+        _instances[T] = _createLocateDelegate()._resolveFactory(factory);
+      }
     }
   }
 
   @override
   T locate<T extends Object>() {
     return _createLocateDelegate().locate<T>();
+  }
+
+  @override
+  Future<T> locateAsync<T extends Object>() {
+    return _createLocateDelegate().locateAsync<T>();
   }
 
   @override
@@ -68,6 +80,19 @@ class _LocateDeletage extends Locator {
   }
 
   @override
+  Future<T> locateAsync<T extends Object>() async {
+    _checkIsNotBeingLocated<T>();
+    servicesBeingLocated.add(T);
+    _checkCanBeLocated<T>();
+    final locatedService = (_locateInInstances<T>() ?? await _locateInAsyncFactories<T>())!;
+    if (locatedService.shouldCache) {
+      instances[T] = locatedService.instance;
+    }
+    servicesBeingLocated.remove(T);
+    return locatedService.instance;
+  }
+
+  @override
   bool canLocate<T extends Object>() {
     return instances.containsKey(T) || factories.containsKey(T);
   }
@@ -80,8 +105,19 @@ class _LocateDeletage extends Locator {
     return _LocatedService(instance: instance, shouldCache: true);
   }
 
+  Future<_LocatedService<T>?> _locateInAsyncFactories<T extends Object>() async {
+    final factory = factories[T] as _Factory<FutureOr<T>>?;
+    if (factory == null) {
+      return null;
+    }
+    return _LocatedService(
+      instance: await _resolveAsyncFactory(factory),
+      shouldCache: factory.isSingleton,
+    );
+  }
+
   _LocatedService<T>? _locateInFactories<T extends Object>() {
-    final factory = factories[T] as _Factory<T>?;
+    final factory = factories[T] as _Factory<FutureOr<T>>?;
     if (factory == null) {
       return null;
     }
@@ -103,8 +139,17 @@ class _LocateDeletage extends Locator {
     }
   }
 
-  T _resolveFactory<T extends Object>(_Factory<T> factory) {
-    return factory.factoryFn(this);
+  T _resolveFactory<T extends Object>(_Factory<FutureOr<T>> factory) {
+    final result = factory.factoryFn(this);
+    if (result is T) {
+      return result;
+    } else {
+      throw TriedToExecuteAsyncFactoryInSyncMethodException(servicesBeingLocated);
+    }
+  }
+
+  Future<T> _resolveAsyncFactory<T extends Object>(_Factory<FutureOr<T>> factory) async {
+    return await factory.factoryFn(this);
   }
 }
 

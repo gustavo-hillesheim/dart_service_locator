@@ -52,6 +52,22 @@ void main() {
 
       expect(executedFactory, true);
     });
+
+    test('WHEN registering a non-lazy async factory SHOULD execute the factory asynchronously', () async {
+      var executedFactory = false;
+      final registerFuture = locator.registerFactory(
+        (l) async {
+          executedFactory = true;
+          return ClassA();
+        },
+        lazy: false,
+      );
+
+      expect(registerFuture, isA<Future>());
+      await registerFuture;
+
+      expect(executedFactory, true);
+    });
   });
 
   group('canLocate', () {
@@ -106,7 +122,7 @@ void main() {
     test('WHEN instance is not registered SHOULD throw CouldNotLocateException', () {
       try {
         locator.locate<ClassA>();
-        fail('Should have thrown exception');
+        fail('Should have thrown CouldNotLocateException');
       } catch (e) {
         print(e);
         expect(e, isA<CouldNotLocateException<ClassA>>());
@@ -117,7 +133,7 @@ void main() {
       locator.registerFactory((l) => ClassB(l()));
       try {
         locator.locate<ClassB>();
-        fail('Should have thrown exception');
+        fail('Should have thrown CouldNotLocateException');
       } catch (e) {
         print(e);
         expect(e, isA<CouldNotLocateException<ClassC>>());
@@ -130,13 +146,64 @@ void main() {
 
       try {
         locator.locate<ClassB>();
-        fail('Should have thrown exception');
+        fail('Should have thrown CircularDependencyException');
       } catch (e) {
         print(e);
         expect(e, isA<CircularDependencyException<ClassB>>());
       }
     });
+
+    test(
+        'WHEN trying to locate async factory synchronously SHOULD throw TriedToExecuteAsyncFactoryInSyncMethodException',
+        () {
+      locator.registerFactory((l) async => ClassA());
+
+      try {
+        locator.locate<ClassA>();
+        fail('Should have thrown TriedToExecuteAsyncFactoryInSyncMethodException');
+      } catch (e) {
+        print(e);
+        expect(e, isA<TriedToExecuteAsyncFactoryInSyncMethodException>());
+      }
+    });
+
+    test(
+        'WHEN tries to locate service that depends on async service synchronously SHOULD throw TriedToExecuteAsyncFactoryInSyncMethodException',
+        () {
+      locator.registerFactory(createAsyncFactory((l) => ClassA()));
+      locator.registerFactory((l) => ClassD(l()));
+
+      try {
+        locator.locate<ClassD>();
+        fail('Should have thrown TriedToExecuteAsyncFactoryInSyncMethodException');
+      } catch (e) {
+        print(e);
+        expect(e, isA<TriedToExecuteAsyncFactoryInSyncMethodException>());
+      }
+    });
   });
+
+  group('locateAsync', () {
+    test('WHEN tries to locate async factory SHOULD return instance', () async {
+      locator.registerFactory(createAsyncFactory((l) => ClassA()));
+
+      expect(await locator.locateAsync<ClassA>(), isA<ClassA>());
+    });
+
+    test('WHEN tries to locate sync factory SHOULD return instance', () async {
+      locator.registerFactory(createAsyncFactory((l) => ClassA()));
+
+      expect(await locator.locateAsync<ClassA>(), isA<ClassA>());
+    });
+  });
+}
+
+FactoryFn<Future<T>> createAsyncFactory<T extends Object>(FactoryFn<T> factoryFn) {
+  return (l) async {
+    // Required to make the function return asynchronously
+    await Future.delayed(const Duration(milliseconds: 300));
+    return factoryFn(l);
+  };
 }
 
 class ClassA {}
@@ -151,4 +218,9 @@ class ClassC {
   final ClassB b;
 
   ClassC(this.b);
+}
+
+class ClassD {
+  final ClassA a;
+  ClassD(this.a);
 }

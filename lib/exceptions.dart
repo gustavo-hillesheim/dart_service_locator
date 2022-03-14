@@ -42,3 +42,17 @@ String _typeStackAsString(List<Type> typeStack) {
   }
   return stackAsString;
 }
+
+class TriedToExecuteAsyncFactoryInSyncMethodException implements Exception {
+  final String message;
+  final List<Type> typeStack;
+
+  TriedToExecuteAsyncFactoryInSyncMethodException(this.typeStack)
+      : message = 'A call to an async factory was found when trying to resolve a dependency synchronously. '
+            'Check the following stack to discover how this occurred:  \n${_typeStackAsString(typeStack)}';
+
+  @override
+  String toString() {
+    return message;
+  }
+}
